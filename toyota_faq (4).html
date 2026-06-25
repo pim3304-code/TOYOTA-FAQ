@@ -116,7 +116,7 @@
     border: 1px solid var(--gray-200);
     border-radius: var(--radius);
     margin-bottom: 4px;
-    overflow: hidden;
+    /* ลบ overflow: hidden ออกจาก .faq-item */
     transition: border-color 0.2s;
   }
 
@@ -137,6 +137,7 @@
     color: var(--gray-800);
     line-height: 1.6;
     transition: background 0.15s;
+    border-radius: var(--radius);
   }
 
   .faq-question:hover { background: var(--gray-50); }
@@ -166,8 +167,8 @@
 
   .faq-answer {
     max-height: 0;
-    overflow: hidden;
-    transition: max-height 0.9s ease;
+    overflow: hidden;  /* overflow: hidden ย้ายมาอยู่ที่นี่แทน */
+    transition: max-height 0.4s ease;
   }
 
   .faq-answer-inner {
@@ -356,7 +357,7 @@ function toggle(id) {
     btn.setAttribute('aria-expanded', 'false');
   } else {
     item.classList.add('active');
-    ans.style.maxHeight = '2000px';
+    ans.style.maxHeight = ans.scrollHeight + 'px';
     btn.setAttribute('aria-expanded', 'true');
   }
 }
