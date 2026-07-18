@@ -116,7 +116,6 @@
     border: 1px solid var(--gray-200);
     border-radius: var(--radius);
     margin-bottom: 4px;
-    /* ลบ overflow: hidden ออกจาก .faq-item */
     transition: border-color 0.2s;
   }
 
@@ -167,7 +166,7 @@
 
   .faq-answer {
     max-height: 0;
-    overflow: hidden;  /* overflow: hidden ย้ายมาอยู่ที่นี่แทน */
+    overflow: hidden;
     transition: max-height 0.4s ease;
   }
 
@@ -177,12 +176,30 @@
     padding-top: 14px;
   }
 
+  /* --- ส่วนที่แก้ไข: รองรับคำตอบแบบขึ้นบรรทัดใหม่ / แบบข้อๆ --- */
   .answer-text {
     font-size: 14px;
     color: var(--gray-600);
     line-height: 1.8;
     white-space: pre-wrap;
+    margin-bottom: 8px;
   }
+  .answer-text:last-child { margin-bottom: 0; }
+
+  .answer-list {
+    font-size: 14px;
+    color: var(--gray-600);
+    line-height: 1.8;
+    padding-left: 20px;
+    margin: 0;
+  }
+
+  .answer-list li {
+    margin-bottom: 6px;
+    padding-left: 4px;
+  }
+  .answer-list li:last-child { margin-bottom: 0; }
+  /* --- จบส่วนที่แก้ไข --- */
 
   .no-answer {
     font-size: 13px;
@@ -281,23 +298,46 @@ const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vScgL3O0EmO1X
 
 let allData = [];
 
+/* --- แก้ไข: parser ตัวใหม่ อ่านทีละตัวอักษรทั้งไฟล์
+   เพื่อรองรับกรณีคำตอบมีการขึ้นบรรทัดใหม่ (newline) อยู่ภายใน cell
+   ของ Google Sheet (CSV แบบเดิมที่ split ด้วย '\n' ก่อน จะทำให้
+   คำตอบที่มีการ Enter ขึ้นบรรทัดใหม่ในชีตถูกตัดขาดผิดตำแหน่ง) --- */
 function parseCSV(text) {
-  const lines = text.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  return lines.slice(1).map((line, idx) => {
-    const cols = [];
-    let cur = '', inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === '"') { inQ = !inQ; }
-      else if (c === ',' && !inQ) { cols.push(cur.trim()); cur = ''; }
-      else { cur += c; }
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  let i = 0;
+  const len = text.length;
+
+  while (i < len) {
+    const c = text[i];
+
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQuotes = false; i++; continue;
+      }
+      field += c; i++; continue;
+    } else {
+      if (c === '"') { inQuotes = true; i++; continue; }
+      if (c === ',') { row.push(field); field = ''; i++; continue; }
+      if (c === '\r') { i++; continue; }
+      if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; i++; continue; }
+      field += c; i++; continue;
     }
-    cols.push(cur.trim());
-    const obj = { id: idx + 1 };
-    headers.forEach((h, i) => obj[h] = (cols[i] || '').replace(/^"|"$/g, ''));
-    return obj;
-  }).filter(r => r.question);
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+
+  const headers = rows[0].map(h => h.trim());
+  return rows.slice(1)
+    .filter(r => r.some(cell => cell.trim() !== ''))
+    .map((cols, idx) => {
+      const obj = { id: idx + 1 };
+      headers.forEach((h, i) => obj[h] = (cols[i] || '').trim());
+      return obj;
+    })
+    .filter(r => r.question);
 }
 
 function groupByCategory(data) {
@@ -310,6 +350,48 @@ function groupByCategory(data) {
   return map;
 }
 
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/* --- แก้ไข: ฟังก์ชันใหม่สำหรับแปลงข้อความคำตอบให้แสดงผลแบบ
+   "ขึ้นบรรทัดใหม่" หรือ "แบบข้อๆ" (1. 2. 3. / 1) 2) 3) / - / •)
+   แทนการยัดทุกอย่างลงในบรรทัดเดียว --- */
+function formatAnswer(raw) {
+  let text = (raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return '';
+
+  // แยกตามบรรทัดจริงก่อน (กรณีมีการกด Enter ในชีตอยู่แล้ว)
+  let lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // ถ้าเป็นบรรทัดเดียว ลองแยกแบบ "1. ... 2. ..." หรือ "1) ... 2) ..."
+  // ที่พิมพ์ต่อกันมาโดยไม่ได้ Enter
+  if (lines.length <= 1) {
+    const parts = text
+      .split(/(?=(?:^|\s)\d+[\.\)]\s)/g)
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (parts.length > 1) lines = parts;
+  }
+
+  if (lines.length > 1) {
+    const listPattern = /^(\d+[\.\)]|[-•‣]) ?\s*/;
+    const isList = lines.every(l => listPattern.test(l));
+
+    if (isList) {
+      const items = lines.map(l => escapeHtml(l.replace(listPattern, '')));
+      return `<ol class="answer-list">${items.map(i => `<li>${i}</li>`).join('')}</ol>`;
+    }
+    // หลายบรรทัดแต่ไม่ได้ขึ้นต้นด้วยเลข/สัญลักษณ์ → แสดงเป็นย่อหน้าแยกบรรทัด
+    return lines.map(l => `<p class="answer-text">${escapeHtml(l)}</p>`).join('');
+  }
+
+  return `<p class="answer-text">${escapeHtml(text)}</p>`;
+}
+
 function renderFAQ(data) {
   const container = document.getElementById('faqContainer');
   if (!data.length) {
@@ -320,13 +402,13 @@ function renderFAQ(data) {
   let html = '';
   Object.keys(grouped).forEach(cat => {
     html += `<div class="section">
-      <div class="section-title">${cat}<span class="count-badge">${grouped[cat].length}</span></div>`;
+      <div class="section-title">${escapeHtml(cat)}<span class="count-badge">${grouped[cat].length}</span></div>`;
     grouped[cat].forEach(row => {
       const hasAnswer = row.answer && row.answer.trim().length > 0;
       html += `
       <div class="faq-item" id="item-${row.id}">
         <button class="faq-question" onclick="toggle('${row.id}')" aria-expanded="false">
-          <span class="faq-q-text">${row.question}</span>
+          <span class="faq-q-text">${escapeHtml(row.question)}</span>
           <svg class="faq-chevron" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true">
             <polyline points="6 9 12 15 18 9"/>
           </svg>
@@ -334,7 +416,7 @@ function renderFAQ(data) {
         <div class="faq-answer" id="ans-${row.id}">
           <div class="faq-answer-inner">
             ${hasAnswer
-              ? `<p class="answer-text">${row.answer}</p>`
+              ? formatAnswer(row.answer)
               : `<p class="no-answer">ยังไม่มีคำตอบ</p>`
             }
           </div>
